@@ -13,7 +13,7 @@ class MorphometricTree():
     def buildMorphTree(self):
         print("building a morph tree\n")
 
-        root = BloodVessel(order=1, location="Root")
+        root = MorphTreeVessel(order=1, location="Root")
         self.treeMatrix.append(root)
         
         rows = len(self.conn_matrix) - 1
@@ -27,7 +27,7 @@ class MorphometricTree():
         
 
 
-class BloodVessel():
+class MorphTreeVessel():
 
     def __init__(self, order, leftChild=None, rightChild=None, location=None):
 
