@@ -1,149 +1,175 @@
-# imports
 import numpy as np
+from scipy.io import savemat
 
-class MorphometricTree():
-    """
-    An implimentation of morphometric trees modeled after Weiguang Yang et al.
-    Uses a connectivity matrix and set diameters to generate a tree
-    """
-    def __init__(self, parent_order=None, conn_matrix=None, length=None, 
-                 diameter=None, viscosity=None):
+class MorphTree():
 
+    def __init__(self, parent_order, connectivity, length, diameter, viscosity,
+                 remainder, total_elements_created):
+        
         self.parent_order = parent_order
-        self.conn_matrix = np.array(conn_matrix) # a connectivity matrix must be supplied
+        self.connectivity = connectivity
         self.length = length
         self.diameter = diameter
         self.viscosity = viscosity
+        self.remainder = remainder
+        self.total_elements_created = total_elements_created
 
-        print("Tree Details")
-        print("Parent Order: \n", self.parent_order)
-        print("Conn Matrix: \n", self.conn_matrix)
-        print("Length: \n", self.length)
-        print("Diameter: \n", self.diameter)
-        print("Viscosity: \n", self.viscosity)
+
+    def generate_morphometric_tree(self):
     
-    def buildMorphTree(self):
-        print("building a morph tree\n")
-        print(self.conn_matrix)
-        print()
-
-        if self.parent_order <= 7: # assign a value of N
-            N = 10000
-        elif self.parent_order <= 11:
-            N = 400000
-        elif self.parent_order <= 13:
-            N = 5000000
-        else:
+        if self.parent_order <= 15:
             N = 30000000
+        elif self.parent_order > 11 and self.parent_order <= 13:
+            N = 5000000
+        elif self.parent_order > 7 and self.parent_order <= 11:
+            N = 400000
+        else:
+            N = 10000
+    
+        # Calculate initial children and remainders
+        children = self.connectivity[:, self.parent_order] + self.remainder[:, self.parent_order]
+        self.remainder[:, self.parent_order] = children - np.round(children)
+        children = np.round(children).astype(int)
+        self.total_elements_created += np.sum(children)
+        number_of_children = np.sum(children)
 
-        print("N: \n", N)
-
-        remainder = np.zeros((self.parent_order+1, self.parent_order+1)) # create blank remainder array
-
-        print("Remainder Array: \n", remainder)
-
-        children = self.conn_matrix[:, self.parent_order] # children of parent order
-
-        print("Children: \n", children)
-
-        remainder[:, self.parent_order] = children - np.round(children) # make remainder array the absolute value of the remainder
-
-        print("Remainder Array: \n", remainder)
-
-        children = np.round(children) # rounding children up
-        
-        print("Children: \n", children)
-
-        total_elems_created = np.copy(children)
-
-        print("Total_elems_created: \n", total_elems_created)
-
-        num_children = int(sum(children))
-
-        print("Num_Children: \n", num_children)
-        
+        # Create a sorted list of child orders from smallest to largest
         child_orders = []
-        i = 0
-        while i < self.parent_order: # create the child orders array
-            child_orders += ([i]*int(children[i])) 
-            i+=1
+        for order in range(1, self.parent_order + 1):
+            child_orders.extend([order] * children[order - 1])
         child_orders = np.array(child_orders)
 
-        print("Child Orders: \n", child_orders)
-
-        current_elem = 1 # not sure what this block does 
-        parent_seg = np.zeros((N, 3))
-        parent_seg[0, 2] = self.parent_order
+        # Initialize parent and segment arrays
+        current_working_elem = 0
+        parent_seg_elem = np.zeros((N, 3), dtype=int)
+        parent_seg_elem[0, :] = [0, 0, self.parent_order]  # First element setup
         max_elem = 1
-
-        max_seg = 0 # not sure what this block doesc c 
-        seg_connectivity = np.zeros((N, 3)) # 
+        max_seg = 0
+        seg_connectivity = np.zeros((N, 3), dtype=int)
         seg_size = np.zeros((N, 3))
-        
-        if num_children < 2:
-            raise ValueError("Need at least 2 children on the parent root")
-        elif num_children >= 2: # line 88 of jasons code
-            i = 0
-            while i < num_children-1:
-                if i<num_children-1:
-                    seg_connectivity[max_seg] = np.array([i, -1, i+1])
+
+        # Handling first element based on the number of children
+        if number_of_children < 2:
+            print("children for root < 2, stop")
+        else:
+            for i in range(number_of_children - 1):
+                if i < number_of_children - 2:
+                    seg_connectivity[max_seg, :] = [i - 1, -1, i + 1]
                 else:
-                    seg_connectivity[max_seg] = np.array([i, -1, -1])
-
-                #print(seg_connectivity)
-
-                seg_size[max_seg] = np.array([self.diameter[self.parent_order], 
-                                                self.length[self.parent_order]/(num_children-1), 
-                                                self.parent_order])
-                
-                #print(seg_size)
-
+                    seg_connectivity[max_seg, :] = [i - 1, -1, -1]
+        
+                seg_size[max_seg, :] = [self.diameter[self.parent_order - 1] / 2, 
+                                        self.length[self.parent_order - 1] / (number_of_children - 1), 
+                                        self.parent_order]
                 max_seg += 1
-                i += 1
-        
+
+        # Reordering child elements if conditions are met
         if child_orders[-1] == self.parent_order and len(child_orders) != 2:
-            child_orders = [child_orders[:-4], child_orders[-1], child_orders[-3:-2]] # reorders things, but never seems to get called lol
+            child_orders = np.concatenate((child_orders[:-3], [child_orders[-1], child_orders[-3], child_orders[-2]]))
+
+        # Add last two child elements to the outlet of the current element
+        parent_seg_elem[max_elem:max_elem + 2, :] = [[max_seg, 1, child_orders[-1]], [max_seg, 2, child_orders[-2]]] # editied to 1, 2 instead of 2, 3????
+        max_elem += 2
+        child_orders = child_orders[:-2]
+
+        # For each remaining child element, add to the interior segment's left side???
+        for i in range(len(child_orders)):
+            parent_seg_elem[max_elem, :] = [max_seg - i, 2, child_orders[-(i + 1)]]
+            max_elem += 1
+
+        current_working_elem += 1
+
+        # create elements and assign to segments for the rest of the elements
+        while current_working_elem <= max_elem:
+            print("current", current_working_elem)
+            print("max", max_elem)
+            print(parent_seg_elem) # this seems to be really off
+            par_index, side, current_order = parent_seg_elem[current_working_elem]
+            #print("parent", par_index)
+            #print("side", side)
+            #print("current order", current_order)
+            first_seg_index = max_seg + 1
+            children = self.connectivity[:, current_order] + self.remainder[:, current_order]
+            self.remainder[:, current_order] = children - np.round(children)
+            children = np.round(children).astype(int)
+            self.total_elements_created += children
+            number_of_children = np.sum(children)
         
-        #line 110 Jasons Code
-
-        parent_seg[max_elem] = np.array([max_seg, 2, child_orders[-1]])
-        parent_seg[max_elem+1] = np.array([max_seg, 3, child_orders[-2]])
-        max_elem+=2
-
-        child_orders = child_orders[0:-2]
+            child_orders = []  
+            for order in range(1, self.parent_order + 1):
+                child_orders.extend([order] * children[order - 1])
         
-        i = 0
-        while i < len(child_orders):
-            parent_seg[max_elem+1] = np.array([max_seg-i, 2, child_orders[-1-i]])
-            max_elem+=1
-            i+=1
-        
-        current_elem +=1
+            if number_of_children == 0:
+                seg_connectivity[par_index, side] = first_seg_index
+                seg_connectivity[max_seg, :] = [par_index, 0, 0]
+                seg_size[max_seg, :] = [self.diameter[current_order - 1] / 2, self.length[current_order - 1], current_order]
+                max_seg += 1
 
-        while current_elem <= max_elem:
-            
-            par_index = parent_seg[current_elem, 0]
-            side = parent_seg[current_elem, 1]
-            current_order = int(parent_seg[current_elem, 2])
+            if number_of_children == 1 and child_orders[0] == 1 and current_order == 1:
+                seg_connectivity[par_index, side] = first_seg_index
+                seg_connectivity[max_seg:max_seg + 2, :] = [[par_index, -1, first_seg_index + 1], [first_seg_index, 0, 0]]
+                seg_size[max_seg:max_seg + 2, :] = [[self.diameter[0] / 2, self.length[0] / 2, 1], [self.diameter[0] / 2, self.length[0] / 2, 1]]
+                max_seg += 2
+                parent_seg_elem[max_elem] = [first_seg_index, 2, 1]
+                max_elem += 1
+            elif number_of_children == 1 and child_orders[0] != 1 and current_order != 1:
+                seg_connectivity[par_index, side] = first_seg_index
+                seg_connectivity[max_seg:max_seg + 2, :] = [[par_index, -1, first_seg_index + 1], [first_seg_index, 0, 0]]
+                seg_size[max_seg:max_seg + 2, :] = [[self.diameter[current_order - 1] / 2, self.length[current_order - 1] / 2, current_order],
+                                                    [self.diameter[current_order - 1] / 2, self.length[current_order - 1] / 2, current_order]]
+                max_seg += 2
+                parent_seg_elem[max_elem] = [first_seg_index, 2, child_orders[0]]
+                max_elem += 1
+            elif number_of_children == 1:
+                seg_connectivity[par_index, side] = first_seg_index
+                seg_connectivity[max_seg:max_seg + 2, :] = [[par_index, -1, first_seg_index + 1], [first_seg_index, 0, 0]]
+                seg_size[max_seg:max_seg + 2, :] = [[self.diameter[current_order - 1] / 2, self.length[current_order - 1] / 2, current_order],
+                                        [self.diameter[current_order - 1] / 2, self.length[current_order - 1] / 2, current_order]]
+                max_seg += 2
+                parent_seg_elem[max_elem] = [first_seg_index, 2, child_orders[0]]
+                max_elem += 1
 
-            first_seg_index = max_seg+1
-            children = np.add(self.conn_matrix[:, current_order], remainder[:, current_order]) # calculate num child
-            total_elems_created += children
-            num_children = sum(children)
+            # Handling case for two or more children
+            if number_of_children >= 2:
+                seg_size[max_seg:max_seg + number_of_children - 1, :] = np.array([
+                    [self.diameter[current_order - 1] / 2, self.length[current_order - 1] / (number_of_children - 1), current_order]
+                    for _ in range(number_of_children - 1)
+                ])
 
-            child_orders = []
-            i = 0
-            while i < self.parent_order: # create the child orders array
-                child_orders += ([i]*int(children[i])) 
-                i+=1
+                if child_orders[-1] == self.parent_order and len(child_orders) != 2:
+                    child_orders = np.concatenate((child_orders[:-3], [child_orders[-1], child_orders[-3], child_orders[-2]]))
+                
+                seg_connectivity[par_index, side] = first_seg_index
 
-            child_orders = np.array(child_orders)
-        
-            current_elem+=1
-            # line 137 MATLAB
+                if number_of_children == 2:
+                    seg_connectivity[max_seg, :] = [par_index, -1, -1]
+                    max_seg += 1
+                else:
+                    for i in range(number_of_children - 1):
+                        if i == 0:
+                            seg_connectivity[max_seg] = [par_index, -1, first_seg_index + 1]
+                        elif i < number_of_children - 2:
+                            seg_connectivity[max_seg] = [first_seg_index + i - 1, -1, first_seg_index + i]
+                        else:
+                            seg_connectivity[max_seg] = [first_seg_index + i - 1, -1, -1]
+                        max_seg += 1
+
+                parent_seg_elem[max_elem:max_elem + 2, :] = [[max_seg, 1, child_orders[-1]], [max_seg, 2, child_orders[-2]]] # editied to 1, 2 instead of 2, 3????
+                max_elem += 2
+
+                child_orders = child_orders[:-2]
+
+                for i, child_order in enumerate(reversed(child_orders)): # WHAT!?
+                    parent_seg_elem[max_elem] = [max_seg - i, 2, child_order]
+                    max_elem += 1
+            if(max_seg>100): # this is getting increased infinitely and creating an infinite loop somewhere
+                break
+            current_working_elem += 1
+
+        print(children)
 
 
-def testMorphTree():
+def testMorphTreeBeta():
 
     #create the same table from Yang et al.
     rows, cols = (3, 3)
@@ -155,14 +181,18 @@ def testMorphTree():
 
     diameter = np.array([0.1, 0.2, 0.3])
     length = np.array([.3, .5, .7])
+    remainder = np.zeros((10, 10))
 
-    morphTree = MorphometricTree(conn_matrix=C, parent_order=2, diameter=diameter, length=length)
+    morphTree = MorphTree(connectivity=C, parent_order=9, 
+                                  diameter=diameter, length=length, 
+                                  viscosity=None, remainder=remainder, 
+                                  total_elements_created=0)
 
-    morphTree.buildMorphTree()
+    morphTree.generate_morphometric_tree()
 
 def testMorphTreeShinohara():
 
-    C = [[0.19, 4.06, 2.48, 1.36, 0, 0, 0, 0, 0, 0],
+    conn_matrix = [[0.19, 4.06, 2.48, 1.36, 0, 0, 0, 0, 0, 0],
          [0, 0.12, 1.55, 0.93, 0, 0, 0, 0, 0, 0],
          [0, 0, 0.17, 2.26, 0.31, 0.05, 0.11, 0.13, 0, 0],
          [0, 0, 0, 0.05, 2.0, 0.7, 0.62, 0.42, 0.39, 0],
@@ -173,12 +203,19 @@ def testMorphTreeShinohara():
          [0, 0, 0, 0, 0, 0, 0, 0, 0.06, 1.67],
          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0.17]]
     
+    C = np.array(conn_matrix)
+    
     diameter = np.array([0.004, 0.0057, 0.0082, 0.0118, 0.0171, 0.0246, 0.0354, 0.0509, 0.0733, 0.1056])
     length = np.array([0.077, 0.0123, 0.0197, 0.0316, 0.0505, 0.0809, 0.1294, 0.2070, 0.3313, 0.5300])
+    remainder = np.zeros((10, 10))
     
-    shinoharaTree = MorphometricTree(conn_matrix=C, parent_order=9, diameter=diameter, length=length)
-
-    shinoharaTree.buildMorphTree()
+    shinoharaTree = MorphTree(connectivity=C, parent_order=9, 
+                                  diameter=diameter, length=length, 
+                                  viscosity=None, remainder=remainder, 
+                                  total_elements_created=0)
+    print("gen tree")
+    shinoharaTree.generate_morphometric_tree()
+    print("DONE!")
 
 #testMorphTree()
 testMorphTreeShinohara()
